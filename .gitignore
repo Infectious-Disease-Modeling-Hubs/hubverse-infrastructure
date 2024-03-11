@@ -1,7 +1,12 @@
 **/.DS_Store
 
+*.egg-info
 *.pyc
 venv/
 
 *.envrc
 *.env
+
+# artifacts from transform function and lambda packaging
+build/
+*.zip
