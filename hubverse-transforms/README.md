@@ -30,28 +30,21 @@ To use this class from your local machine, you'll need to have Hubverse AWS cred
 
 ### Deploying to AWS Lambda:
 
-The `create_package.sh` script packages the data transform code based on [instructions here](https://docs.aws.amazon.com/lambda/latest/dg/python-package.html).  
+The `lambda_build_deploy.sh` script packages the data transform code based on [instructions here](https://docs.aws.amazon.com/lambda/latest/dg/python-package.html).  
 
 1. `cd hubverse-transforms`
-2. `source create_package.sh`
+2. `source lambda_build_deploy.sh`
 
 This for testing only: if we decide to use AWS lambda, we'd do this via CI and not via a janky shell script.
 The script uses AWS CLI commands to writes the package to S3 and updates the Lambda function, so you'll need to have
 AWS CLI installed and configured with the necessary permissions.
 
 
-### Deploying to AWS Lambda
-
-Because the .zip is > 50 MB, it can't be uploaded directly via the AWM Lambda Console. It has to go to S3 first.
-
-1. `cd hubverse-transforms`
-2. `aws s3 cp hubverse_transforms.zip s3://hubverse-infrastructure-test/`
-3. In the AWS Lambda Console, upload the .zip from the above S3 location
-
 #### Lambda Limitations
 
 - max size of deployment package (unzipped) = 250 MB
 - max function run time = 15 minutes
+- designed for one file at a time (i.e., doesn't help an existing hub that onboards to cloud)
 
 ## Infrastructure Note
 
