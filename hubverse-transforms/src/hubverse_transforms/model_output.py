@@ -104,11 +104,14 @@ class ModelOutputHandler:
 
         full_s3_path = f'{self.bucket_name}/{self.s3_key}'
         logger.info(f'Reading file: {full_s3_path}')
-        model_output_file = self.s3.open_input_stream(full_s3_path)
 
         if self.s3_object_type == '.csv':
+            model_output_file = self.s3.open_input_stream(full_s3_path)
             model_output_table = csv.read_csv(model_output_file)
         elif self.s3_object_type == '.parquet':
+            # parquet requires random access reading (because metadata),
+            # so we use open_input_file instead of open_intput_stream
+            model_output_file = self.s3.open_input_file(full_s3_path)
             model_output_table = pq.read_table(model_output_file)
         else:
             raise NotImplementedError(f'Unsupported file type: {self.s3_object_type}')
