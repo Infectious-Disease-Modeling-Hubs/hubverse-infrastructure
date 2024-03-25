@@ -15,9 +15,11 @@ def lambda_handler(event, context):
     bucket = event['Records'][0]['s3']['bucket']['name']
     key = urllib.parse.unquote_plus(event['Records'][0]['s3']['object']['key'], encoding='utf-8')
 
-    # temp check so we can use covid19-forecast-hub data for volume testing
-    if 'metadata' in key:
-        print('metadata file, skipping...')
+    # temporary hack to skip file types not yet supported
+    # (and to skip metdata, readme, etc files when testing with covid19-forecast-hub)
+    extensions = ['.csv', '.parquet']
+    if not any(ext in key.lower() for ext in extensions):
+        print(f'{key} is not a supported file type, skipping')
         return
 
     print(f'bucket: {bucket}')
