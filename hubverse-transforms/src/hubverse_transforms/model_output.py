@@ -16,41 +16,23 @@ logger.setLevel(logging.INFO)
 
 
 class ModelOutputHandler:
-    def __init__(
-        self,
-        file_path: str,
-        origin_prefix: str = 'raw',
-        storage_location: str | None = None,
-        fs_interface: pa.fs.FileSystem | None = None
+    def __init__(self, input_uri: str, output_uri: str):
+        input_filesystem = fs.FileSystem.from_uri(input_uri)
+        self.fs_input = input_filesystem[0]
+        self.input_file = input_filesystem[1]
 
-    ):
-        # Might be useful to do a local transform of model-output files at some point,
-        # but for now, we'll maintain focus on transforming cloud-based files (specifically, AWS)
-        if fs_interface is None or storage_location is None:
-            raise NotImplementedError('Only S3FileSystem is supported at this time.')
-        else:
-            self.fs_interface = fs_interface
+        output_filesystem = fs.FileSystem.from_uri(output_uri)
+        self.fs_output = output_filesystem[0]
+        self.output_path = output_filesystem[1]
 
-        self.storage_location = storage_location
-        self.file_path = file_path
-
-        path = pathlib.Path(file_path)
+        # get file name and type from input file
+        path = pathlib.Path(self.input_file)
         self.file_name = path.stem
         self.file_type = path.suffix
 
+        # TODO: Add other input file types as needed
         if self.file_type not in ['.csv', '.parquet']:
-            # TODO: validate against hub's list of supported model-output file types?
-            raise ValueError(f'Unsupported file type: {path.suffix}')
-
-        # ModelOutputHandler is designed to operate on original versions of model-output
-        # data (i.e., as submitted my modelers). This check ensures that the file being
-        # transformed has originated from wherever a hub keeps these "raw" (un-altered)
-        # model-outputs.
-        if path.parts[0] != origin_prefix:
-            raise ValueError(f'Model output path {file_path} does not being with {origin_prefix}.')
-        else:
-            # Destination path = origin path w/o the origin prefix
-            self.destination_path = str(path.relative_to(origin_prefix).parent)
+            raise NotImplementedError(f'Unsupported file type: {path.suffix}')
 
         # Parse model-output file name into individual parts
         # (round_id, team, model)
@@ -59,29 +41,31 @@ class ModelOutputHandler:
         self.team = file_parts['team']
         self.model = file_parts['model']
 
-
     def __repr__(self):
-        return f"ModelOutputHandler('{self.storage_location}', '{self.file_path}', '{self.destination_path}')"
-
+        return f"ModelOutputHandler('{self.fs_input.type_name}', '{self.input_file}', '{self.output_path}')"
 
     def __str__(self):
-        return f'Handle model-output data transforms for {self.file_path} in {self.storage_location}.'
-
+        return f'Handle model-output data transforms for {self.input_file}.'
 
     @classmethod
-    def from_s3(cls, bucket_name: str, s3_key: str, origin_prefix: str = 'raw'):
+    def from_s3(cls, bucket_name: str, s3_key: str, origin_prefix: str = 'raw') -> 'ModelOutputHandler':
         """Instantiate ModelOutputHandler for file on AWS S3."""
 
-        try:
-            aws_region = fs.resolve_s3_region(bucket_name)
-        except OSError:
-            # default to region used by Hubverse
-            aws_region = 'us-east-1'
+        # ModelOutputHandler is designed to operate on original versions of model-output
+        # data (i.e., as submitted my modelers). This check ensures that the file being
+        # transformed has originated from wherever a hub keeps these "raw" (un-altered)
+        # model-outputs.
+        path = pathlib.Path(s3_key)
+        if path.parts[0] != origin_prefix:
+            raise ValueError(f'Model output path {s3_key} does not begin with {origin_prefix}.')
 
-        s3fs = fs.S3FileSystem(request_timeout=10, connect_timeout=10, region=aws_region)
+        s3_input_uri = f's3://{bucket_name}/{s3_key}'
 
-        return cls(s3_key, origin_prefix, bucket_name, s3fs)
+        # Destination path = origin path w/o the origin prefix
+        destination_path = str(path.relative_to(origin_prefix).parent)
+        s3_output_uri = f's3://{bucket_name}/{destination_path}'
 
+        return cls(s3_input_uri, s3_output_uri)
 
     def parse_file(cls, file_name: str) -> dict:
         """Parse model-output file name into individual parts."""
@@ -92,7 +76,11 @@ class ModelOutputHandler:
         # https://github.com/orgs/Infectious-Disease-Modeling-Hubs/discussions/10
         file_name_split = file_name.rsplit('-', 2)
 
-        if file_name.count('-') > 4 or len(file_name_split) != 3 or not re.match(r'^\d{4}-\d{2}-\d{2}$', file_name_split[0]):
+        if (
+            file_name.count('-') > 4
+            or len(file_name_split) != 3
+            or not re.match(r'^\d{4}-\d{2}-\d{2}$', file_name_split[0])
+        ):
             raise ValueError(f'File name {file_name} not in expected model-output format: yyyy-mm-dd-team-model.')
 
         file_parts = {}
@@ -104,26 +92,21 @@ class ModelOutputHandler:
         logger.info(f'Parsed model-output filename: {file_parts}')
         return file_parts
 
-
-    def read_file(self, fs: pa.fs.FileSystem) -> pa.table:
+    def read_file(self) -> pa.table:
         """Read model-output file into PyArrow table."""
 
-        full_path = f'{self.storage_location}/{self.file_path}'
-        logger.info(f'Reading file: {full_path}')
+        logger.info(f'Reading file: {self.input_file}')
 
         if self.file_type == '.csv':
-            model_output_file = fs.open_input_stream(full_path)
+            model_output_file = self.fs_input.open_input_stream(self.input_file)
             model_output_table = csv.read_csv(model_output_file)
-        elif self.file_type == '.parquet':
+        else:
             # parquet requires random access reading (because metadata),
             # so we use open_input_file instead of open_intput_stream
-            model_output_file = fs.open_input_file(full_path)
+            model_output_file = self.fs_input.open_input_file(self.input_file)
             model_output_table = pq.read_table(model_output_file)
-        else:
-            raise NotImplementedError(f'Unsupported file type: {self.file_type}')
 
         return model_output_table
-
 
     def add_columns(self, model_output_table: pa.table) -> pa.table:
         """Add model-output metadata columns to PyArrow table."""
@@ -147,28 +130,23 @@ class ModelOutputHandler:
 
         return updated_model_output_table
 
-
-    def write_parquet(self, fs: pa.fs.FileSystem, updated_model_output_table: pa.table) -> tuple[str, str]:
+    def write_parquet(self, updated_model_output_table: pa.table) -> str:
         """Write transformed model-output table to parquet file."""
 
-        transformed_file_path = f'{self.destination_path}/{self.file_name}.parquet'
+        transformed_file_path = f'{self.output_path}/{self.file_name}.parquet'
 
-        # Current assumption is that we're writing back to the same bucket
-        parquet_object_location = f'{self.storage_location}/{transformed_file_path}'
-
-        with fs.open_output_stream(parquet_object_location) as parquet_file:
+        with self.fs_output.open_output_stream(transformed_file_path) as parquet_file:
             pq.write_table(updated_model_output_table, parquet_file)
 
-        logger.info(f'Finished writing parquet file: {parquet_object_location}')
+        logger.info(f'Finished writing parquet file: {transformed_file_path}')
 
-        return self.storage_location, transformed_file_path
-    
+        return transformed_file_path
 
-    def transform_model_output(self):
+    def transform_model_output(self) -> str:
         """Transform model-output data and write to parquet file."""
 
-        model_output_table = self.read_file(self.fs_interface)
+        model_output_table = self.read_file()
         updated_model_output_table = self.add_columns(model_output_table)
-        transformed_location, transformed_file_path = self.write_parquet(self.fs_interface, updated_model_output_table)
+        transformed_file_path = self.write_parquet(updated_model_output_table)
 
-        return transformed_location, transformed_file_path
+        return transformed_file_path

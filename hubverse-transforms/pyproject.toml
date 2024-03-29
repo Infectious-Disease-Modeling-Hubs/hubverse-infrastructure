@@ -17,9 +17,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    'pre-commit',
+    'coverage',
     'pytest',
-    'ruff',
+    'pytest-mock'
 ]
 
 [build-system]
